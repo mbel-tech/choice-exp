@@ -1,0 +1,17 @@
+# =============================================================================
+# Preserve bytes exactly as committed.
+#
+# This repository's claim is that every script is byte-identical to the working
+# tree that produced the manuscript, verified by reversing the path
+# substitution and comparing raw bytes. Git's default end-of-line normalisation
+# would break that claim at checkout: `core.autocrlf=true` stores blobs as LF
+# and converts back to CRLF on Windows, which silently rewrites the 16 mixed
+# bare-LF lines that several of these files genuinely contain.
+#
+# `-text` disables that conversion in both directions, so a clone reproduces
+# the committed bytes on every platform. Mixed line endings inside a file are
+# preserved because they are part of what was verified, not an accident to be
+# tidied.
+# =============================================================================
+
+* -text

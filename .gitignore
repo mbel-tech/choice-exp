@@ -1,0 +1,48 @@
+# =============================================================================
+# choice-exp -- source, record and configuration only.
+#
+# This repository holds analysis code and the written record of the decisions
+# behind it. It does NOT hold the dataset (deposited at Zenodo, see README),
+# pipeline output (regenerable from these scripts), or the manuscript.
+#
+# The data/ slot below is reserved: drop the Zenodo download there and the
+# pipeline can find it without any edit to this file.
+# =============================================================================
+
+# ---- Pipeline output (regenerable) -----------------------------------------
+output/
+STEP5_stats/
+validation_reports/
+**/outputs/
+*.log
+
+# ---- Data (fetched from Zenodo, never committed) ----------------------------
+data/
+*.xlsx
+*.xls
+
+# ---- Raw tracking data ------------------------------------------------------
+checked_sessions*/
+*.npy
+*.pickle
+*.pkl
+*.h5
+
+# ---- Documents and figures --------------------------------------------------
+*.docx
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.tif
+
+# ---- Editor / OS noise ------------------------------------------------------
+~$*
+*.tmp
+*.bak
+.Rhistory
+.RData
+.Rproj.user/
+__pycache__/
+*.pyc
+.Rprofile.local

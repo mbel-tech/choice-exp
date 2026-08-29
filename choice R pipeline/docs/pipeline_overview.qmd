@@ -1,0 +1,416 @@
+---
+title: "Choice Experiment Analysis Pipeline"
+subtitle: "Exercise choice vs control — school-level behavioural statistics"
+author: "B3 Cohort Analysis"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    self-contained: true
+    fig-width: 8
+    fig-height: 5
+  pdf:
+    toc: true
+    number-sections: true
+    geometry: margin=2.5cm
+    fontsize: 11pt
+execute:
+  echo: true
+  warning: false
+  message: false
+  eval: false
+---
+
+```{r setup}
+#| eval: true
+#| include: false
+# This document is a living overview of the pipeline.
+# Set eval: true on individual chunks only when the corresponding
+# STEP outputs exist in the expected directories.
+knitr::opts_chunk$set(comment = "#>")
+```
+
+# Overview
+
+This document describes the complete analysis pipeline for the **exercise-choice experiment** (B3 cohort). Two treatment groups — *exercise choice* and *control* — are compared across a set of school-level behavioural indicators derived from idtracker.ai video-tracking data.
+
+The pipeline is implemented as a series of R scripts run via the master file `00_master_pipeline_choice_exp.R`. Each step produces time-stamped output directories so that any step can be re-run without overwriting prior results.
+
+**Experimental design snapshot:**
+
+| Feature | Value |
+|---|---|
+| Treatments | `control`, `exercise choice` |
+| Housing-tank densities | 4, 8, 12, 16 fish/tank (RE candidate only) |
+| Arena fish count | Always 5 |
+| Timepoints per trial | 3 × 20-min segments |
+| Tracking software | idtracker.ai |
+| Analysis unit | Trial × Timepoint (school-level) |
+
+: Experimental design {tbl-cap-location="bottom"}
+
+---
+
+# Pipeline Steps
+
+## Step 1 — Raw trajectory parsing (`idtracker_STEP1_choice_exp.R`)
+
+Reads raw idtracker.ai output (per-session folder with trajectory CSVs), assigns each frame-level detection to one of two polygon hierarchies:
+
+- **Main zone** (`flow` vs `calm`) — equal-area halves of the arena separated by a flow gradient.
+- **Sub-zone** (`high`, `medium`, `low`, `calm`) — four strata graded by current intensity.
+
+Zone polygons are defined in two orientation-specific reference files (one per motor-side orientation):
+
+- `zone_reference_choice_exp_FT.csv` — FT (flow-toward) orientation
+- `zone_reference_choice_exp_FD.csv` — FD (flow-diagonal) orientation
+
+Polygon vertices are measured in pixel units in ImageJ from a representative video frame of the correct orientation. Zone assignment uses a vectorised ray-casting point-in-polygon test; sub-zone polygons take priority over the broad "flow" polygon where they are spatially nested.
+
+**Output:** `STEP1_output/STEP1_output_<ts>/master_fish_by_frame.csv`
+
+```{r step1-config}
+# CONFIG variables used by STEP 1
+# Raw idtracker.ai sessions live outside this repository; see config.R.
+# The literal formerly hardcoded here pointed at D:/GOT R SCRIPTS/, a
+# different project root - a stale path that never matched this tree.
+if (!exists("PIPELINE_DATA_DIR")) source(file.path(PROJECT_ROOT, "config.R"))
+FRAME_HEIGHT_PX         <- 1080L          # video resolution (informational)
+N_PARALLEL_WORKERS      <- NULL           # NULL → detectCores() - 1, max 8
+SKIP_PROCESSED_SESSIONS <- FALSE          # TRUE = incremental re-run
+```
+
+---
+
+## Step 2 — Activity summary (`activity_analysis_STEP2_choice_exp.R`)
+
+Builds identity-free, school-level summaries at the **trial × timepoint** resolution from the frame-level trajectory data. Because idtracker.ai cannot maintain persistent individual identities in turbulent-flow arenas, all indicators are computed without relying on fish identity labels.
+
+### Trajectory pre-processing
+
+Applied sequentially to each trial's raw (x, y) coordinate streams:
+
+1. **Gap interpolation** — NaN runs bounded by valid coordinates on both sides are filled by linear interpolation.
+2. **Jump detection** — frame-to-frame Euclidean displacements are computed; frames whose incoming displacement exceeds *mean + 10 SD* of the session-wide speed distribution are marked as jumps and replaced by interpolation.
+3. **Identity-swap detection** — for each consecutive frame pair and each fish pair (i, j), the ratio *(d_self_i + d_self_j) / (d_cross_i + d_cross_j)* is computed. Pairs with ratio > 1.5 (swap ≥ 50 % more parsimonious than current assignment) are flagged; confirmed swap events (verified by Hungarian assignment when `clue` is available) trigger a coordinate-column swap from event onset onward.
+
+### Indicators computed
+
+| Indicator | Column | Method |
+|---|---|---|
+| Zone occupancy (main) | `prop_time` (long, `zone_level == "main"`) | Per-frame zone proportion, time-weighted mean |
+| Zone occupancy (sub) | `prop_time` (long, `zone_level == "sec"`) | Area-corrected, rescaled to sum to 1 |
+| Switches per session | `switches_per_session` | NN-matched flow↔calm crossings, normalised to 20 min |
+| Zone flux | `zone_flux_per_session` | Mean absolute frame-to-frame Δ(n_flow/n_total), diagnostic only |
+| Active fraction | `prop_active` | Proportion of NN-matched blobs exceeding 1 BL s⁻¹ |
+
+**Outputs:**
+
+- `STEP2_output/STEP2_output_<ts>/trial_activity_summary.csv` — wide format, one row per trial × timepoint
+- `STEP2_output/STEP2_output_<ts>/trial_occupancy_long.csv` — long format, one row per trial × timepoint × zone
+
+---
+
+## Step 2b — Group dynamics (`group_dynamics_STEP2b_choice_exp.R`)
+
+Computes five collective-behaviour metrics per trial × timepoint using the `swaRm` package, applied frame-by-frame and aggregated to means. Only frames with ≥ 3 valid fish positions are used.
+
+| Metric | Column | Description |
+|---|---|---|
+| Mean NND | `mean_nnd_cm` | Mean nearest-neighbour distance (cohesion proxy) |
+| Polarisation | `mean_polarisation` | Modulus of mean unit heading vector [0, 1] |
+| Mean IID | `mean_iid_cm` | Mean inter-individual distance (all pairs) |
+| School area | `mean_hull_area_cm2` | School spread |
+| School speed | `mean_centroid_spd_cm` | Per-frame displacement of school centroid |
+
+Pixel measurements converted to centimetres via trial-specific calibration (body-length-derived pixel-to-cm ratio).
+
+**Output:** `STEP2b_output/STEP2b_output_<ts>/group_dynamics_summary.csv`
+
+---
+
+## Step 3 — Zone-switch diagnostics (`zone_switch_diagnostics_choice_exp.R`)
+
+Computes Pearson and Spearman correlations between `switches_per_session` (statistical response) and `zone_flux_per_session` (model-free diagnostic), faceted by treatment. Exports a scatter plot and a one-paragraph results text. Supports use of `switches_per_session` as the primary statistical response.
+
+**Output:** `zone_switch_diagnostics/zone_switch_diagnostics_<ts>/`
+
+---
+
+## Step 4 — Graphs (`activity_analysis_GRAPHS_choice_exp.R`)
+
+Produces editable PowerPoint files with two output sets: **timepoint-resolved** (faceted by segment) and **aggregated** (session means).
+
+- Standard indicator plots: x = treatment, colour + shape = treatment (▲ control, ● exercise choice).
+- Zone plots: x = zone, colour = zone, shape = treatment; treatments dodged within each zone.
+
+**Output:** `STEP4_graphs/STEP4_graphs_<ts>/`
+
+---
+
+## Step 5 — Statistics (`activity_analysis_STATS_choice_exp.R`)
+
+The primary statistical analysis. Two modules:
+
+- **Module A** — trial × timepoint (primary inference)
+- **Module B** — trial-level (timepoints collapsed, companion/robustness check)
+
+### Configuration
+
+```{r step5-config}
+TREATMENT_LEVELS  <- c("control", "exercise choice")
+DENSITY_LEVELS    <- c(4L, 8L, 12L, 16L)
+DENSITY_AS_FACTOR <- TRUE           # treat density as ordered factor in models
+TIMEPOINT_LEVELS  <- 1:3
+
+# KR/Satterthwaite comparison (requires lmerTest + pbkrtest)
+# Set TRUE to add KR vs SW comparison table to Word report
+# SIMPLIFY_SINGULAR_TO_LM <- FALSE  # TRUE: singular LMMs fall back to lm()
+```
+
+### Random-effect candidates
+
+Random effects are specified by design, not selected from data to maximise fit.
+
+**Wide-format responses** (one row per trial × timepoint):
+
+| Label | Formula | Rationale |
+|---|---|---|
+| `tank` | `(1 \| tank)` | Sub-groups from same holding tank share tank-specific variance |
+| `trial` | `(1 \| trial_id)` | Three timepoints from one trial share session conditions |
+| `trial_tank` | `(1 \| trial_id) + (1 \| tank)` | Both sources |
+| `date` | `(1 \| trial_date)` | Trials run on same day may share day-specific conditions |
+| `trial_date_r` | `(1 \| trial_id) + (1 \| trial_date)` | Trial + day |
+| `density` | `(1 \| fish_density_f)` | Pre-trial housing density (not arena variable) |
+
+**Long-format responses** (one row per trial × timepoint × zone):
+
+| Label | Formula | Rationale |
+|---|---|---|
+| `trial` | `(1 \| trial_id)` | Paired zone observations within trial are not independent |
+| `tank` | `(1 \| tank)` | Tank-level variance |
+| `trial_tank` | `(1 \| trial_id) + (1 \| tank)` | Both |
+| `nested_tank` | `(1 \| tank / trial_id)` | Trial nested within tank |
+
+AICc is used as a secondary diagnostic only — to drop RE terms that are unidentifiable for a given response (e.g., `(1|tank)` when fewer than 5 tank levels are present), not to choose between biologically distinct fixed-effect structures.
+
+### Analysis workflow (per indicator)
+
+```
+1. Shapiro-Wilk test on lm residuals (normality check).
+2. Levene's test (variance homogeneity).
+3. If SW p < 0.05: try log1p and sqrt transforms;
+   retain transform that best satisfies both tests.
+   (Skipped for count/proportion responses — handled by GLMM family.)
+4. Fit all RE candidates under REML; rank by AICc;
+   drop unidentifiable candidates; retain best-supported structure.
+5. Type III ANOVA:
+   - Gaussian LMM: Kenward-Roger F (primary) + Satterthwaite (comparison)
+   - Beta/Poisson/NB GLMM: Wald χ²
+6. If any term p < 0.05: Tukey-adjusted EMMs + compact letter display.
+7. Marginal + conditional R² (Nakagawa, via performance::r2()).
+8. Pseudoreplication check: parallel tank-level mean LM on same response;
+   treatment p-values compared for concordance.
+9. Benjamini-Hochberg FDR across primary treatment p-values.
+```
+
+### Analysis modules
+
+#### Module A — Trial × Timepoint (primary) {#sec-module-a}
+
+```{r module-a-table}
+#| eval: true
+#| echo: false
+analyses <- data.frame(
+  ID    = paste0("A", c(1, "1_agg", 2, "2_agg", 3, "3_agg", 4, "4_agg",
+                        "5–6", "7–8", "9–10", "11–12", "13–14", "15–16")),
+  Label = c(
+    "Main-zone occupancy (flow/calm) × Treatment × Zone × Timepoint",
+    "Main-zone occupancy × Treatment × Zone (aggregated)",
+    "Sub-zone occupancy (h/m/l/calm) × Treatment × Zone × Timepoint",
+    "Sub-zone occupancy × Treatment × Zone (aggregated)",
+    "Switches per session × Treatment × Timepoint",
+    "Switches per session × Treatment (aggregated)",
+    "Active fraction × Treatment × Timepoint",
+    "Active fraction × Treatment (aggregated)",
+    "Mean NND × Treatment (× Timepoint / aggregated)",
+    "Polarisation × Treatment (× Timepoint / aggregated)",
+    "Mean IID × Treatment (× Timepoint / aggregated)",
+    "School area × Treatment (× Timepoint / aggregated)",
+    "School speed × Treatment (× Timepoint / aggregated)",
+    "Centroid speed × Treatment (aggregated)"
+  ),
+  Response  = c(
+    "prop_time (beta GLMM)", "prop_time (beta GLMM)",
+    "prop_time (Gaussian LMM)", "prop_time (Gaussian LMM)",
+    "n_main_switches (Poisson/NB GLMM)", "switches_per_session (LMM)",
+    "prop_active (beta GLMM)", "prop_active (beta GLMM)",
+    "mean_nnd_cm", "mean_polarisation",
+    "mean_iid_cm", "mean_hull_area_cm2",
+    "mean_centroid_spd_cm", "mean_centroid_spd_cm"
+  )
+)
+knitr::kable(analyses, col.names = c("ID", "Analysis", "Response / model family"),
+             caption = "Module A analyses (A1–A16)")
+```
+
+**Fixed-effect structures:**
+
+- **Main-zone occupancy (A1):** `treatment * zone * timepoint_f` (beta GLMM, logit link, glmmTMB)
+- **Sub-zone occupancy (A2):** `treatment + zone + timepoint_f + treatment:zone + treatment:timepoint_f + treatment:zone:timepoint_f` (Gaussian LMM; lower-order interactions dropped to avoid near-empty cells in the 4-zone × 3-timepoint × 2-treatment design)
+- **Switches (A3):** raw count `n_main_switches` with `offset(log(total_time_s))`, Poisson or NB (selected by Pearson dispersion ratio)
+- **Active fraction (A4):** `treatment * timepoint_f` (beta GLMM)
+- **Group dynamics (A7–A16):** `treatment * timepoint_f` or `treatment` (Gaussian LMM)
+
+For all timepoint-resolved indicators, both categorical (`timepoint_f`) and continuous (`timepoint`) parameterisations are fitted; the better-supported representation (lower AICc) is retained. Aggregated companions use `treatment` (or `treatment * zone` for zone responses) as the only fixed effect.
+
+Sum-to-zero contrasts applied during fitting so that Type-III main effects are marginal.
+
+#### Module B — Trial-level (companion)
+
+Each indicator averaged across timepoints within `trial_id`. Zone responses retain `treatment * zone`; all others use `treatment` alone. `(1|tank)` retained when ≥ 2 tanks contribute > 1 trial; otherwise plain `lm()` fitted. Same inference, post-hoc, and BH correction as Module A.
+
+### Pseudoreplication check
+
+For main-zone occupancy and active fraction: a parallel **tank-level mean LM** is run on the same response. Treatment p-values from the mixed model and the tank-mean LM are compared; concordance is printed to console and saved to `pseudoreplication_check.csv`.
+
+### Multiple-testing correction
+
+Benjamini-Hochberg FDR applied across the **focal treatment p-values** from the primary Module A analyses. Results saved to `bh_correction_summary.csv`.
+
+### Outputs
+
+```
+STEP5_stats/STEP5_stats_<ts>/
+├── analysis_ready.csv
+├── design_balance.csv
+├── pseudoreplication_check.csv
+├── bh_correction_summary.csv
+├── zone_main_timepoint/          # A1
+│   ├── model_summary.txt
+│   ├── anova_KR.csv
+│   ├── anova_SW.csv              # Satterthwaite comparison
+│   ├── cld_treatment_zone.csv
+│   ├── contrasts_treatment_zone.csv
+│   ├── residual_plot.png
+│   └── qq_plot.png
+├── zone_main_aggregated/         # A1_agg
+├── zone_sec_timepoint/           # A2
+├── zone_sec_aggregated/          # A2_agg
+├── switches_timepoint/           # A3
+├── switches_aggregated/          # A3_agg
+├── moving_timepoint/             # A4
+├── moving_aggregated/            # A4_agg
+├── nnd_timepoint/                # A7
+├── nnd_aggregated/               # A8
+├── polarisation_timepoint/       # A9
+├── polarisation_aggregated/      # A10
+├── iid_timepoint/                # A11
+├── iid_aggregated/               # A12
+├── hull_area_timepoint/          # A13
+├── hull_area_aggregated/         # A14
+├── centroid_speed_timepoint/     # A15
+├── centroid_speed_aggregated/    # A16
+└── skinny_graphs/
+    ├── skinny_graphs_aggregated.pptx
+    ├── skinny_graphs_timepoint.pptx
+    └── png_preview/
+```
+
+The Word report `analysis_report_choice_exp.docx` (written to the pipeline folder) collects all model summaries, ANOVA tables, post-hoc results, and diagnostic information into a single document.
+
+---
+
+# R Packages
+
+```{r packages}
+# Core statistics
+library(lme4)       # LMM/GLMM fitting
+library(lmerTest)   # Kenward-Roger + Satterthwaite df (optional)
+library(pbkrtest)   # Kenward-Roger F tests (optional)
+library(glmmTMB)    # Beta GLMM, NB GLMM (optional)
+library(MASS)       # glm.nb fallback
+library(MuMIn)      # AICc model ranking
+library(car)        # Type III ANOVA, Levene's test
+library(emmeans)    # Estimated marginal means
+library(multcomp)   # CLD (compact letter display)
+library(multcompView)
+library(performance) # R²m / R²c (optional)
+
+# Data wrangling
+library(dplyr)
+library(tidyr)
+library(readr)
+library(readxl)
+library(stringr)
+library(purrr)
+library(data.table)
+
+# Parallelism
+library(furrr)
+library(future)
+
+# Reporting
+library(officer)
+library(rvg)
+library(flextable)
+library(ggplot2)
+```
+
+---
+
+# Design Notes
+
+## Why identity-free indicators?
+
+The exercise-choice arena generates turbulent water current. Although idtracker.ai produces accurate per-frame positional data, persistent individual identities cannot be reliably maintained across the full 20-min tracking intervals under these conditions. Because the experimental intervention is experienced collectively (a school-level flow gradient), all downstream analyses use identity-independent indicators. The same pipeline is applied to control-treatment trials for methodological consistency.
+
+## Fish density as random effect
+
+Fish density refers to the **housing-tank** stocking density experienced before trials (the arena always contains 5 fish). It is included as a random-effect candidate — not a fixed effect — so models can absorb variance attributable to pre-trial housing rather than treating density as an experimental manipulation. When tank identity and density are confounded 1:1 (detectable via the design balance check), only one of the two intercepts is retained.
+
+## Timepoint parameterisation
+
+For all timepoint-resolved indicators, two parameterisations are fitted:
+- **Categorical** (`timepoint_f`): each segment treated as a distinct level.
+- **Continuous** (`timepoint`): linear trend across segments.
+
+The better-supported parameterisation (lower AICc) is retained. This is a parameterisation choice, not a hypothesis choice; the underlying fixed-effect terms remain as specified by the design.
+
+## Pseudoreplication
+
+Tank is the repeated-measures unit (sub-groups are drawn from holding tanks). The primary mixed model accounts for tank-level clustering via the random intercept. As a guard, a parallel tank-level mean LM is run on primary responses and treatment p-values are compared for concordance.
+
+---
+
+# Quick-Start
+
+```{r quickstart}
+# 1. Set working directory to anywhere inside the repository, then:
+source("paths.R")    # discovers PROJECT_ROOT from the .choice-exp-root sentinel
+
+# 2. Point config.R at the raw data, via environment variable:
+#    - CHOICE_EXP_DATA_DIR  (path to raw session folders; Step 1 only)
+#    - START_FROM_STEP    (1 = full run; 5 = stats only)
+
+# 3. Source master file
+source("00_master_pipeline_choice_exp.R")
+
+# 4. Word report written to:
+#    D:/GOT R SCRIPTS/choice R pipeline/analysis_report_choice_exp.docx
+```
+
+---
+
+# Session Info
+
+```{r session-info}
+#| eval: true
+sessionInfo()
+```
