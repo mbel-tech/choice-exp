@@ -59,8 +59,11 @@ stopifnot(file.exists(TEMPLATE_FILE))
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
-.csv_behavior <- "easy_scripts_dataset.csv"
-.csv_endo     <- "easy_scripts_endo_dataset.csv"
+# The mini-scripts no longer name a CSV. They call the loader in
+# _data_access.R, which resolves the Zenodo deposit first and the pipeline-side
+# CSVs second, and hands back either one in the internal vocabulary.
+.load_call_beh  <- function(resp) sprintf('load_behaviour_dataset(require = "%s")', resp)
+.load_call_endo <- function() "load_endocrine_dataset()"
 
 .fmt_filter_agg <- function(resp) sprintf(
   'dat %%>%%
@@ -152,6 +155,14 @@ cat("N per treatment:\\n"); print(table(d$treatment))',
   }
   out <- file.path(ROOT, folder, filename)
   dir.create(dirname(out), showWarnings = FALSE, recursive = TRUE)
+  # An unresolved {{PLACEHOLDER}} must never reach disk. Without this, a
+  # template/generator mismatch ships a broken script silently -- which is
+  # exactly how the generator and the mini-scripts could drift apart.
+  # Character classes rather than backslash escapes: less to get wrong.
+  if (grepl("{{", txt, fixed = TRUE))
+    stop("[generator] unresolved placeholder(s) in ", filename, ": ",
+         paste(unique(regmatches(txt, gregexpr("[{][{][A-Z_]+[}][}]", txt))[[1]]),
+               collapse = ", "), call. = FALSE)
   writeLines(txt, out)
   invisible(out)
 }
@@ -170,7 +181,7 @@ for (i in seq_len(nrow(.spec_agg))) {
     FILENAME                = fname,
     RES_OBJECT              = paste0("res_", sub("mean_|prop_|logit_|lr_", "", resp), "_agg"),
     LINE_RANGE              = "see §5/§5b",
-    CSV_NAME                = .csv_behavior,
+    LOAD_CALL               = .load_call_beh(resp),
     FILTER_AND_AGGREGATE_EXPR = .fmt_filter_agg(resp),
     INDICATOR_LABEL         = s$indicator_label,
     ADDITIONAL_FACTOR_LINES = 'd$tank <- factor(d$tank)\nd$fish_density_f <- factor(d$fish_density_f, levels = as.character(DENSITY_LEVELS_g))',
@@ -204,7 +215,7 @@ for (i in seq_len(nrow(.spec_tp))) {
     FILENAME                = fname,
     RES_OBJECT              = paste0("res_", sub("mean_|prop_|logit_|lr_", "", resp), "_tp"),
     LINE_RANGE              = "see §5/§5b",
-    CSV_NAME                = .csv_behavior,
+    LOAD_CALL               = .load_call_beh(resp),
     FILTER_AND_AGGREGATE_EXPR = .fmt_filter_tp(resp),
     INDICATOR_LABEL         = paste(s$indicator_label, "(by interval)"),
     ADDITIONAL_FACTOR_LINES = 'd$tank <- factor(d$tank)\nd$timepoint_f <- factor(d$timepoint_f, levels = TIMEPOINT_LEVELS_g)\nd$fish_density_f <- factor(d$fish_density_f, levels = as.character(DENSITY_LEVELS_g))',
@@ -251,10 +262,10 @@ suppressPackageStartupMessages({
   library(MuMIn); library(emmeans); library(multcomp); library(ggplot2)
 })
 ROOT <- file.path(PROJECT_ROOT, "choice R pipeline/easy_scripts")
+source(file.path(ROOT, "_data_access.R"))
 
 # Step 1: Load
-dat <- readr::read_csv(file.path(ROOT, "easy_scripts_endo_dataset.csv"),
-                       show_col_types = FALSE)
+dat <- load_endocrine_dataset()
 message("Step 1 - Load: ", nrow(dat), " rows x ", ncol(dat), " cols")
 
 # Step 2: Filter

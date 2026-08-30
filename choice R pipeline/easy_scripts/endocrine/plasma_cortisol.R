@@ -31,11 +31,11 @@ suppressPackageStartupMessages({
 })
 
 ROOT <- file.path(PROJECT_ROOT, "choice R pipeline/easy_scripts")
+source(file.path(ROOT, "_data_access.R"))
 source(file.path(ROOT, "_re_candidates.R"))   # gives RE_CORT_CAND
 
 # ---- Step 1: Load -----------------------------------------------------------
-dat <- readr::read_csv(file.path(ROOT, "easy_scripts_endo_dataset.csv"),
-                       show_col_types = FALSE)
+dat <- load_endocrine_dataset()
 message("Step 1 — Load: ", nrow(dat), " rows x ", ncol(dat), " cols")
 
 # ---- Step 2: Filter to cortisol rows ----------------------------------------

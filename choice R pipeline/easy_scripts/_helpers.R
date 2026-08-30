@@ -94,6 +94,23 @@ tryCatch(
       message("[easy_scripts] guard fired at §5 (caught via error handler)")
       return(invisible(NULL))
     }
+    # The STATS file loads STEP2 output in §1, roughly 2200 lines BEFORE the
+    # easy-scripts guard in §5. On a clean clone there is no pipeline output --
+    # choice R pipeline/output/ is gitignored -- so §1 stops and step 3 below,
+    # which is what actually recovers run_lmm_analysis and the plot builders,
+    # was never reached. That made every by_timepoint mini-script unrunnable
+    # from a fresh checkout regardless of which dataset it read.
+    #
+    # Recognise that one failure precisely and fall through to step 3. Any
+    # other error still re-raises: a genuine syntax error in the STATS file
+    # must stay loud.
+    if (grepl("^trial_(activity_summary|occupancy_long) not found",
+              conditionMessage(e))) {
+      message("[easy_scripts] no pipeline output present (", conditionMessage(e), ")")
+      message("[easy_scripts] continuing: helper functions are recovered by ",
+              "parsing, and the mini-scripts read their data directly.")
+      return(invisible(NULL))
+    }
     .cleanup()
     stop("[easy_scripts] sys.source failed: ", conditionMessage(e))
   }
@@ -118,7 +135,15 @@ tryCatch(
   # Position helpers used by .make_std_plot etc.
   "POS_JD", "POS_JITTER",
   # Spec lists used by the generator
-  ".ind_tp_specs", ".gd_specs"
+  ".ind_tp_specs", ".gd_specs",
+  # Model-fitting globals that run_lmm_analysis and check_and_transform read
+  # but do not receive as arguments. Without these they fail with "object not
+  # found" whenever §1 did not run -- which is every clean clone. All are
+  # side-effect-free literals; the data frames and directory constants that §1
+  # also defines are deliberately NOT here, because they are pipeline results,
+  # not constants, and nothing on the mini-script path reads them.
+  ".ALLOW_CONTINUOUS_TP", "N_PB_DEFAULT", "PB_SEED",
+  ".UNBOUNDED_RESPONSE_PATTERNS", "ALL_TRIAL_DATES_BEH"
 )
 
 .is_safe_assignment <- function(e) {
@@ -172,6 +197,24 @@ message(sprintf(
   "[easy_scripts/_helpers.R] loaded: %d functions, %d constants (skipped: %d)",
   .n_fn, .n_const, .n_skip
 ))
+
+# STEP5_OUT is assigned inside an `if` block in the STATS file, so
+# .is_safe_assignment correctly refuses it and step 3 cannot recover it. The
+# model helpers write per-model CSVs there. When no pipeline output exists,
+# point it at a temp directory rather than letting the first write fail.
+#
+# This also removes a standing side effect: sourcing the STATS file otherwise
+# does dir.create(file.path(getwd(), "STEP5_stats")) unconditionally, littering
+# whatever directory the user happened to be in.
+if (!exists("STEP5_OUT", envir = globalenv(), inherits = FALSE)) {
+  .step5_tmp <- file.path(tempdir(),
+                          paste0("STEP5_stats_easy_",
+                                 format(Sys.time(), "%Y%m%d_%H%M%S")))
+  dir.create(.step5_tmp, recursive = TRUE, showWarnings = FALSE)
+  assign("STEP5_OUT", .step5_tmp, envir = globalenv())
+  message("[easy_scripts] STEP5_OUT -> ", .step5_tmp,
+          " (no pipeline output; per-model CSVs go to a temp dir)")
+}
 
 # Clean up helper-load signals so subsequent calls behave normally
 .cleanup()

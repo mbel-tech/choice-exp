@@ -17,9 +17,17 @@ validation_reports/
 *.log
 
 # ---- Data (fetched from Zenodo, never committed) ----------------------------
+# zenodo_dataset/ is where the DOI's contents are unpacked -- see README. It is
+# CSVs, which none of the rules below would otherwise catch.
+zenodo_dataset/
 data/
 *.xlsx
 *.xls
+
+# Pipeline-side inputs the easy_scripts loader falls back to when the deposit is
+# absent. Produced by the pipeline; not distributed with the code.
+choice R pipeline/easy_scripts/easy_scripts_dataset.csv
+choice R pipeline/easy_scripts/easy_scripts_endo_dataset.csv
 
 # ---- Raw tracking data ------------------------------------------------------
 checked_sessions*/

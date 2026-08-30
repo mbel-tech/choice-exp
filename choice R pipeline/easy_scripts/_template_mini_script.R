@@ -17,10 +17,11 @@ ROOT <- if (basename(HERE) %in% c("timepoint_aggregated", "by_timepoint",
 if (!file.exists(file.path(ROOT, "_helpers.R")))
   ROOT <- file.path(PROJECT_ROOT, "choice R pipeline/easy_scripts")
 source(file.path(ROOT, "_re_candidates.R"))
+source(file.path(ROOT, "_data_access.R"))
 source(file.path(ROOT, "_helpers.R"))
 
 # ---- Step 1: Load -----------------------------------------------------------
-dat <- readr::read_csv(file.path(ROOT, "{{CSV_NAME}}"), show_col_types = FALSE)
+dat <- {{LOAD_CALL}}
 message("Step 1 — Load: ", nrow(dat), " rows x ", ncol(dat), " cols")
 
 # ---- Step 2: Filter / aggregate to model grain ------------------------------

@@ -43,16 +43,41 @@ suppressPackageStartupMessages({
              error = function(e) ".")
   cand <- normalizePath(file.path(here, "..", "..", "easy_scripts_dataset.csv"),
                         mustWork = FALSE)
-  if (file.exists(cand)) return(cand)
-  file.path(PROJECT_ROOT, "choice R pipeline/easy_scripts/easy_scripts_dataset.csv")
+  if (file.exists(cand)) return(list(path = cand, kind = "internal"))
+  # The Zenodo deposit, if it has been unpacked. Preferred when present, so
+  # that this script exercises the same data a reader downloads.
+  dep <- file.path(Sys.getenv("CHOICE_EXP_DATA_ROOT",
+                              unset = file.path(PROJECT_ROOT, "zenodo_dataset")),
+                   "pref_trials.csv")
+  if (file.exists(dep)) return(list(path = dep, kind = "deposit"))
+  list(path = file.path(PROJECT_ROOT,
+         "choice R pipeline/easy_scripts/easy_scripts_dataset.csv"),
+       kind = "internal")
 }
-.CSV     <- .find_csv()
+.SRC     <- .find_csv()
+.CSV     <- .SRC$path
 .OUT_DIR <- file.path(PROJECT_ROOT, "choice R pipeline/easy_scripts/standalone/outputs")
 dir.create(.OUT_DIR, showWarnings = FALSE, recursive = TRUE)
 cat("Loading:", .CSV, "\n")
 
 # ---- 2. Load + filter -------------------------------------------------------
 dat <- read.csv(.CSV, stringsAsFactors = FALSE)
+if (identical(.SRC$kind, "deposit")) {
+  names(dat)[names(dat) == "phys_trial"]           <- "phys_trial_id"
+  names(dat)[names(dat) == "interval"]             <- "timepoint"
+  names(dat)[names(dat) == "mean_school_area_cm2"] <- "mean_hull_area_cm2"
+  dat$trial_date <- format(as.Date(dat$trial_date, "%Y-%m-%d"), "%d.%m.%Y")
+}
+if (!"mean_polarisation" %in% names(dat))
+  stop("mean_polarisation is not available.
+",
+       "  Polarisation is excluded from reported results on identity-invariance
+",
+       "  grounds (DECISIONS_LOG.md, D6) and is absent from BOTH distributed
+",
+       "  datasets. STEP2b still computes it; run the tracking pipeline if you
+",
+       "  need it. This script is retained deliberately.", call. = FALSE)
 d <- dat %>%
   dplyr::filter(is.finite(mean_polarisation)) %>%
   dplyr::select(phys_trial_id, tank, trial_date, treatment,

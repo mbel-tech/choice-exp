@@ -80,6 +80,27 @@ suppressPackageStartupMessages({
 # alternative paths. Restoration is guaranteed via on.exit().
 
 .with_redirected_csvs <- function(beh_csv, endo_csv, expr) {
+  # TWO redirect mechanisms, deliberately. Neither is redundant.
+  #
+  # (1) options(). The mini-scripts no longer name a CSV -- they call
+  #     load_behaviour_dataset() / load_endocrine_dataset() in
+  #     easy_scripts/_data_access.R, which honours these options above every
+  #     other source. Without this, the basename patch below would match
+  #     nothing, the redirect would become a silent no-op, and runs A and B
+  #     would read the SAME data -- making every comparison in this file pass
+  #     vacuously, forever. A cross-validation that cannot fail is worse than
+  #     no cross-validation, which is why .assert_redirect_took_effect() below
+  #     proves the redirect landed rather than assuming it.
+  #
+  #     Options also survive _data_access.R being re-sourced inside each
+  #     .refit_one_script call, which would clobber a function-level patch.
+  #
+  # (2) The readr::read_csv basename patch, kept for any consumer that still
+  #     reads the pipeline-side CSVs by name.
+  .old_opts <- options(choice_exp.behaviour_csv = beh_csv,
+                       choice_exp.endocrine_csv = endo_csv)
+  on.exit(options(.old_opts), add = TRUE)
+
   # Capture current binding
   ns <- asNamespace("readr")
   orig <- readr::read_csv
@@ -105,6 +126,36 @@ suppressPackageStartupMessages({
   })
 
   force(expr)
+}
+
+# ---- redirect assertion ----------------------------------------------------
+# The whole point of Layer 2 is that run B reads workbook-derived data rather
+# than the same CSV run A read. If the redirect ever stops taking effect, every
+# comparison passes for the wrong reason. This turns that failure mode from
+# invisible into loud.
+#
+# Returns NULL when the redirect is confirmed, or a reason string when it is not.
+.assert_redirect_took_effect <- function(expected_path) {
+  prov <- get0("choice_exp_data_provenance", envir = globalenv(),
+               ifnotfound = NULL)
+  if (is.null(prov)) {
+    return(paste("easy_scripts/_data_access.R was not loaded, so the data source",
+                 "cannot be confirmed. Treating as a bypass rather than",
+                 "assuming the redirect worked."))
+  }
+  p <- prov()
+  if (is.null(p))
+    return("no data load was recorded during run B.")
+  if (!identical(p$source, "override"))
+    return(paste0("run B read source \"", p$source, "\" (", p$paths[1],
+                  "), not the workbook-derived CSV. The redirect did not ",
+                  "take effect."))
+  if (!is.null(expected_path) && length(p$paths) &&
+      !identical(normalizePath(p$paths[1], winslash = "/", mustWork = FALSE),
+                 normalizePath(expected_path, winslash = "/", mustWork = FALSE)))
+    return(paste0("run B read ", p$paths[1], " but the redirect pointed at ",
+                  expected_path, "."))
+  NULL
 }
 
 # ---- ggsave monkey-patch utility -------------------------------------------
