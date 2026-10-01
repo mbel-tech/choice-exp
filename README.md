@@ -5,8 +5,8 @@ of swimming-exercise choice in fish.
 
 This repository holds the code and the written record of the analytical
 decisions behind it. It is a **curated subset** of a larger working tree: only
-the scripts that back the manuscript's current claims are here. Superseded
-versions, pipeline output, figures and the manuscript itself are deliberately
+the scripts that back the article's current claims are here. Superseded
+versions, pipeline output, figures and the article itself are deliberately
 absent.
 
 ## Associated publication
@@ -136,7 +136,7 @@ polarisation results are reported. They are not.
 
 ## Terminology
 
-The manuscript, the deposited workbook and this README all say **interval**. The
+The article, the deposited workbook and this README all say **interval**. The
 pipeline's internals say **`timepoint`**. They are the same thing.
 
 There are two seams, and they are inverses of each other.
@@ -220,7 +220,7 @@ Two honest asterisks on the repointing:
   mapped column agrees to ≤ 5e-12, which is CSV round-trip precision, not error.
 - **`lr_medium_by_tp.R` does not reproduce the published `alr_medium` result**,
   and did not before this change either. It lets AICc choose the random effect
-  freely and selects `(1 | tank)`; the manuscript reports `(1 | phys_trial_id)`,
+  freely and selects `(1 | tank)`; the article reports `(1 | phys_trial_id)`,
   which `DECISIONS_LOG.md` D3 fixes *by design*. The mini-script does not
   implement that constraint, so it answers a slightly different question:
   F(1,39) = 8.93 rather than the reported F(1,14) = 5.28. Verified identical from
