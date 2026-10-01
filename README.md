@@ -19,12 +19,9 @@ juvenile Atlantic salmon. *Hormones and Behavior*, 186, 106001.
 
 ## Data availability
 
-The dataset is deposited at Zenodo:
+The dataset is deposited at Zenodo (published 29 August 2026, CC BY 4.0):
 
 > https://doi.org/10.5281/zenodo.22162227
-
-The DOI is reserved and the deposit is awaiting acceptance, so the link may not
-resolve yet.
 
 The data is not in this repository. What you can do without it splits in two:
 
