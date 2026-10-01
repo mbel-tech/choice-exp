@@ -9,6 +9,14 @@ the scripts that back the manuscript's current claims are here. Superseded
 versions, pipeline output, figures and the manuscript itself are deliberately
 absent.
 
+## Associated publication
+
+Bellio, M., Alvarstein, H., Sneddon, L. U., Newberry, R. C., & Vindas, M. A.
+(2026). Behavioural and neuroendocrine correlates of swimming exercise choice in
+juvenile Atlantic salmon. *Hormones and Behavior*, 186, 106001.
+
+> https://doi.org/10.1016/j.yhbeh.2026.106001
+
 ## Data availability
 
 The dataset is deposited at Zenodo:
